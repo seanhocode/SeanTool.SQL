@@ -9,15 +9,29 @@ CREATE    	PROCEDURE  [dbo].[spGetDataDiff]
 -- =============================================
 -- Create date: <yyyy.mm.dd>
 -- Description:
-@ColumnMapping 格式：[DS1欄位名稱]:[DS2欄位名稱],[DS1欄位名稱]:[DS2欄位名稱]
-@ColumnMapping 兩邊皆對應的到欄位才會納入比對，若有指定但找不到欄位則忽略該欄位
-@IsWarningNotExist 是否要顯示只存在於其中一個資料來源的欄位
-@KeyColumns 可指定主鍵欄位，若未指定則自動帶入 PK 欄位，自動帶入PK時若兩邊PK欄位不同則會同時帶入兩邊的PK欄位
-@IgnoreColumns 只可忽略非Key欄位
+    ParameterDesc:
+        @KeyColumns
+            可指定主鍵欄位，若未指定則自動帶入 PK 欄位，自動帶入PK時若兩邊PK欄位不同則會同時帶入兩邊的PK欄位
+            
+        @IgnoreColumns
+            只可忽略非Key欄位
+
+        @ColumnMapping
+            對應不同欄位名稱，多對應用,分隔
+            兩邊皆對應的到欄位才會納入比對，若有指定但找不到欄位則忽略該欄位
+            格式：[DS1欄位名稱]:[DS2欄位名稱],[DS1欄位名稱]:[DS2欄位名稱]
+
+        @IsWarningNotExist
+            是否要顯示只存在於其中一個資料來源的欄位
 
 -- Ex.
         SELECT * INTO SystemRepository_ST FROM SystemRepository
+        
         UPDATE SystemRepository_ST SET [Value] = 'Test' WHERE [Value] = 'MTQ'
+        ALTER TABLE SystemRepository_ST 
+        ADD NewCol VARCHAR(20) NOT NULL DEFAULT 'Test'
+        
+        DELETE FROM SystemRepository_ST
 
         EXEC dbo.spGetDataDiff
             @DataSource1 = 'SystemRepository',
@@ -25,7 +39,7 @@ CREATE    	PROCEDURE  [dbo].[spGetDataDiff]
             @KeyColumns = NULL,
             @IgnoreColumns = NULL,
             @ColumnMapping = NULL,
-            @IsWarningNotExist = 1
+            @IsWarningNotExist = 0
 
         DROP TABLE SystemRepository_ST
 -- =============================================
@@ -53,7 +67,7 @@ SELECT [KeyColumns]
     , Diff.DS1Value AS [DataSource1]_Value
     , Diff.DS2Value AS [DataSource2]_Value
 FROM [DataSource1] DS1
-JOIN [DataSource2] DS2
+FULL OUTER JOIN [DataSource2] DS2
     ON [KeyConditionSQL]
 CROSS APPLY(
     [ColumnDiffSQL]
@@ -197,22 +211,30 @@ CROSS APPLY(
     SELECT @ColumnDiffSQL = @ColumnDiffSQL
         + CHAR (13) + CHAR (10) + '    '
         + 'UNION SELECT ''' + ISNULL(CI.DS1ColName, CI.DS2ColName) + ''''
-        + CASE WHEN CI.DS1ColName IS NOT NULL THEN ', CAST(DS1.' + CI.DS1ColName + ' AS VARCHAR)' ELSE ', NULL' END
-        + CASE WHEN CI.DS2ColName IS NOT NULL THEN ', CAST(DS2.' + CI.DS2ColName + ' AS VARCHAR)' ELSE ', NULL' END
+        + CASE WHEN CI.DS1ColName IS NOT NULL THEN ', CAST(DS1.' + CI.DS1ColName + ' AS NVARCHAR(MAX))' ELSE ', NULL' END
+        + CASE WHEN CI.DS2ColName IS NOT NULL THEN ', CAST(DS2.' + CI.DS2ColName + ' AS NVARCHAR(MAX))' ELSE ', NULL' END
         + CASE 
             WHEN (CI.DS1ColName IS NOT NULL AND CI.DS2ColName IS NOT NULL)
-                THEN ' WHERE DS1.' + ISNULL(CI.DS1ColName, '') + ' <> DS2.' + ISNULL(CI.DS2ColName, '')
+                THEN ' WHERE EXISTS (SELECT DS1.' + CI.DS1ColName + ' EXCEPT SELECT DS2.' + CI.DS2ColName + ')'
             ELSE ''
         END
     FROM @ColumnInfo CI
     WHERE IsKey = 0
+    
+    -- 在最後補上一個「整列是否存在」的判斷
+    SET @ColumnDiffSQL = @ColumnDiffSQL 
+        + CHAR(13) + CHAR(10) + '    UNION ALL SELECT ''_ROW_STATUS'''
+        + ', CASE WHEN DS1.' + (SELECT TOP 1 DS1ColName FROM @ColumnInfo WHERE IsKey = 1) + ' IS NULL THEN ''Missing'' ELSE ''Exists'' END'
+        + ', CASE WHEN DS2.' + (SELECT TOP 1 DS2ColName FROM @ColumnInfo WHERE IsKey = 1) + ' IS NULL THEN ''Missing'' ELSE ''Exists'' END'
+        + ' WHERE DS1.' + (SELECT TOP 1 DS1ColName FROM @ColumnInfo WHERE IsKey = 1) + ' IS NULL OR DS2.' + (SELECT TOP 1 DS1ColName FROM @ColumnInfo WHERE IsKey = 1) + ' IS NULL'
+        
     SET @ColumnDiffSQL = STUFF(@ColumnDiffSQL, 1, 12, '')
 
     SET @CompareSQL = REPLACE(@CompareSQL, '[DataSource1]', @DataSource1)
     SET @CompareSQL = REPLACE(@CompareSQL, '[DataSource2]', @DataSource2)
     SET @CompareSQL = REPLACE(@CompareSQL, '[ColumnDiffSQL]', @ColumnDiffSQL)
     SET @CompareSQL = REPLACE(@CompareSQL, '[KeyConditionSQL]', @KeyConditionSQL)
-    SET @CompareSQL = REPLACE(@CompareSQL, '[KeyColumns]', (SELECT STRING_AGG( 'DS1.' + DS1ColName, ',') FROM @ColumnInfo WHERE IsKey = 1))
+    SET @CompareSQL = REPLACE(@CompareSQL, '[KeyColumns]', (SELECT STRING_AGG('COALESCE(DS1.' + DS1ColName + ', DS2.' + DS2ColName + ') AS ' + DS1ColName, ', ') FROM @ColumnInfo WHERE IsKey = 1))
     -- SET @CompareSQL = REPLACE(
     --         @CompareSQL
     --         , '[KeyColumns]'
