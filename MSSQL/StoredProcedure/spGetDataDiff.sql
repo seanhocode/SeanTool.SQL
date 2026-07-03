@@ -198,6 +198,16 @@ CROSS APPLY(
     --========================================取的欄位資訊========================================
     
     --#endregion 處理 Key Columns
+    IF NOT EXISTS(SELECT 1 FROM @ColumnInfo WHERE DS1ColName IS NOT NULL AND DS2ColName IS NOT NULL)
+    BEGIN
+        SELECT 'Error: No matching columns found between the two data sources.' AS ErrorMessage
+        RETURN
+    END
+    IF NOT EXISTS(SELECT 1 FROM @ColumnInfo WHERE IsKey = 1)
+    BEGIN
+        SELECT 'Error: No key columns found.' AS ErrorMessage
+        RETURN
+    END
     
     --#region 組出腳本語法
     --========================================組出腳本語法========================================
