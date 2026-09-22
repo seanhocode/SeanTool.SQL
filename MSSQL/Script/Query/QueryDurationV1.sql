@@ -1,22 +1,21 @@
 /*
 ========================================================================================
 Description：
-    從計畫快取 (Plan Cache) 中找出指定時間區間內，平均執行時間最長的 SQL 語句。
-適用情境：
-    1. 資料庫變慢時，定位效能瓶頸
-    2. 針對特定日期進行效能稽核
-    3. 分析哪些語句造成高 CPU 或 高 I/O (Logical Reads) 負擔
+    查詢特定語法中，每一段獨立語法的歷史執行統計
 Note：
-    - 此腳本依賴 sys.dm_exec_query_stats，若服務重啟或手動清空快取，資料將重置
-    - 時間單位已從微秒 (microseconds) 轉換為毫秒 (ms)
-    - 語法已處理 Unicode Offset / 2 的字元轉換問題
+    - 資料來源:         查詢動態管理檢視 (DMV)，讀取伺服器記憶體中的計畫快取 (Plan Cache)
+    - 資料生命週期:     依賴系統快取，若 SQL Server 服務重啟或手動清空快取，資料將重置
+    - 作用範圍:         預設會撈出伺服器上所有已被快取的執行計畫
 ========================================================================================
 */
 
+--此處貼上欲查詢執行時間的語法
+--======================================================================================
+--======================================================================================
 SELECT TOP 20
     st.text AS [CompleteBatchText],
     SUBSTRING(
-        st.text, (qs.statement_start_offset/2) + 1,
+        st.text, (qs.statement_start_offset / 2) + 1,
         (
             (
                 CASE statement_end_offset
@@ -26,7 +25,7 @@ SELECT TOP 20
                         qs.statement_end_offset
                     END
                 - qs.statement_start_offset
-            )　/　2
+            ) / 2
         ) + 1
     ) AS [StatementText],
     qs.execution_count AS [ExecutionCount],

@@ -63,8 +63,8 @@ INSERT INTO #Employee (EmployeeID, Name, ManagerID) VALUES
     
     -- 遞迴查找下屬
     SELECT e.EmployeeID, e.Name, e.ManagerID, eh.Level + 1
-    FROM #Employee e
-    JOIN EmployeeHierarchy eh ON e.ManagerID = eh.EmployeeID
+    FROM EmployeeHierarchy eh
+    JOIN #Employee e ON eh.EmployeeID = e.ManagerID
 )
 SELECT * FROM EmployeeHierarchy ORDER BY Level, EmployeeID
 

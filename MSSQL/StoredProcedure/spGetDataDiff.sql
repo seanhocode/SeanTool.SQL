@@ -218,6 +218,20 @@ CROSS APPLY(
     WHERE IsKey = 1
     SET @KeyConditionSQL = STUFF(@KeyConditionSQL, 1, 8, '')
 
+    -- 以 key 的出現順序配對，避免多筆相同資料重複 join 到同一筆資料
+    SET @CompareSQL = REPLACE(
+        @CompareSQL
+        , 'FROM [DataSource1] DS1'
+        , 'FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY [DS1KeyColumns] ORDER BY (SELECT NULL)) AS _DataDiffRowNumber FROM [DataSource1]) DS1'
+    )
+    SET @CompareSQL = REPLACE(
+        @CompareSQL
+        , 'FULL OUTER JOIN [DataSource2] DS2'
+        , 'FULL OUTER JOIN (SELECT *, ROW_NUMBER() OVER (PARTITION BY [DS2KeyColumns] ORDER BY (SELECT NULL)) AS _DataDiffRowNumber FROM [DataSource2]) DS2'
+    )
+    SET @KeyConditionSQL = @KeyConditionSQL + CHAR (13) + CHAR (10)
+        + '    AND DS1._DataDiffRowNumber = DS2._DataDiffRowNumber'
+
     SELECT @ColumnDiffSQL = @ColumnDiffSQL
         + CHAR (13) + CHAR (10) + '    '
         + 'UNION SELECT ''' + ISNULL(CI.DS1ColName, CI.DS2ColName) + ''''
@@ -238,10 +252,15 @@ CROSS APPLY(
         + ', CASE WHEN DS2.' + (SELECT TOP 1 DS2ColName FROM @ColumnInfo WHERE IsKey = 1) + ' IS NULL THEN ''Missing'' ELSE ''Exists'' END'
         + ' WHERE DS1.' + (SELECT TOP 1 DS1ColName FROM @ColumnInfo WHERE IsKey = 1) + ' IS NULL OR DS2.' + (SELECT TOP 1 DS1ColName FROM @ColumnInfo WHERE IsKey = 1) + ' IS NULL'
         
-    SET @ColumnDiffSQL = STUFF(@ColumnDiffSQL, 1, 12, '')
+    IF(EXISTS(SELECT 1 FROM @ColumnInfo WHERE IsKey = 0))
+        SET @ColumnDiffSQL = STUFF(@ColumnDiffSQL, 1, 12, '')
+    ELSE
+        SET @ColumnDiffSQL = STUFF(@ColumnDiffSQL, 1, 16, '')
 
     SET @CompareSQL = REPLACE(@CompareSQL, '[DataSource1]', @DataSource1)
     SET @CompareSQL = REPLACE(@CompareSQL, '[DataSource2]', @DataSource2)
+    SET @CompareSQL = REPLACE(@CompareSQL, '[DS1KeyColumns]', (SELECT STRING_AGG(DS1ColName, ', ') FROM @ColumnInfo WHERE IsKey = 1))
+    SET @CompareSQL = REPLACE(@CompareSQL, '[DS2KeyColumns]', (SELECT STRING_AGG(DS2ColName, ', ') FROM @ColumnInfo WHERE IsKey = 1))
     SET @CompareSQL = REPLACE(@CompareSQL, '[ColumnDiffSQL]', @ColumnDiffSQL)
     SET @CompareSQL = REPLACE(@CompareSQL, '[KeyConditionSQL]', @KeyConditionSQL)
     SET @CompareSQL = REPLACE(@CompareSQL, '[KeyColumns]', (SELECT STRING_AGG('COALESCE(DS1.' + DS1ColName + ', DS2.' + DS2ColName + ') AS ' + DS1ColName, ', ') FROM @ColumnInfo WHERE IsKey = 1))
